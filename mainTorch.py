@@ -150,6 +150,15 @@ class NeuralNetwork:
             for y in range(self.Ntest): #mutation test loop
                 print("loop :",y,"gen : ",i)
                 d=copy.deepcopy(self.WBGenRef)
+
+                w=torch.stack((d["W"]*100))
+                b=torch.stack((d["b"]*100))
+                mw=[torch.randn(d["W"].shape)*0.2 for _ in range(100)]
+                mb=[torch.randn(d["b"].shape)*0.2 for _ in range(100)]
+                w+=torch.stack(mw)
+                b+=torch.stack(mb)
+
+
                 self.runner.reset()
                 for j in range(len(d["W"])): #create mutation
                     d["W"][j]+=torch.randn(d["W"][j].shape) * 0.2 #gaussion mutation
