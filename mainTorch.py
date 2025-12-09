@@ -109,6 +109,16 @@ class Runner:
 
     def getall(self):
         return (self.x,self.y,self.v,self.vector)
+    
+    def getallANN(self):
+        c=torch.tensor([
+                [self.x / TAILLEX], 
+                [self.y / TAILLEY], 
+                [self.v / PX], 
+                [0.5*(1+self.vector[0])], 
+                [0.5*(1+self.vector[1])]])
+        return c
+
 
 class NeuralNetwork:
     def __init__(self):
@@ -141,36 +151,55 @@ class NeuralNetwork:
     def ScoreUpdate(self,x,y,posx,posy): #every frame score updpate, need to to do better system later
         c=torch.sqrt((x - posx) ** 2 + (y - posy) ** 2)
         ct=1-(c/MAXDISTANCE)
-        self.ActTestScore+=self.Sigmoid(ct)
-        return 
+        
+        return self.Sigmoid(ct)
 
 
     def start(self):
         for i in range(self.Ngen): #generation loop
-            for y in range(self.Ntest): #mutation test loop
-                print("loop :",y,"gen : ",i)
-                d=copy.deepcopy(self.WBGenRef)
+            print("gen : ",i)
+            d=copy.deepcopy(self.WBGenRef)
+            
+            w=[[i.clone() for i in d["W"]] for _ in range(100)]
+            b=[[i.clone() for i in d["b"]] for _ in range(100)]
+            
+            w = [torch.stack([sample[i] for sample in w]) for i in range(len(d['W']))] #not mine
+            b= [torch.stack([sample[i] for sample in b]) for i in range(len(d['b']))]
+            
+            mw=[[torch.randn(d["W"][i].shape)*0.2 for _ in range(100)] for i in range(len(d['W']))]
+            mb=[[torch.randn(d["b"][i].shape)*0.2 for _ in range(100)] for i in range(len(d['b']))]
+            w=torch.add(torch.stack(w),torch.stack(mw)) #STOP HERE
+            b=torch.add(b,mb)
+            pos = self.objectif
+            cl=[Runner() for _ in range(100)]
+            score=[0 for _ in range(100)]
+            for j in range(FPSM*self.timeDuration): #movement loop
+                print(j)
+                data=[torch.vstack([i.getallANN(),torch.tensor([[pos[0] / TAILLEX],[pos[1] / TAILLEY]])]) for i in cl]
+               
+                data=torch.stack(data)
+                for i in range(len(d['W'])):
+                    
+                    data=w[i] @ data + b[i]
+                    data=self.Sigmoid(data)
 
-                w=torch.stack((d["W"]*100))
-                b=torch.stack((d["b"]*100))
-                mw=[torch.randn(d["W"].shape)*0.2 for _ in range(100)]
-                mb=[torch.randn(d["b"].shape)*0.2 for _ in range(100)]
-                w+=torch.stack(mw)
-                b+=torch.stack(mb)
+                for i in range(len(cl)):
+                    cl[i].move(data[i][0]*TAILLEX,data[i][1]*TAILLEY,data[i][2])
+                    score[i]+=self.ScoreUpdate(cl[i].x,cl[i].y,pos[0],pos[1])
 
-
-                self.runner.reset()
-                for j in range(len(d["W"])): #create mutation
-                    d["W"][j]+=torch.randn(d["W"][j].shape) * 0.2 #gaussion mutation
-                for h in range(len(d["b"])):
-                    d["W"][h]+=torch.randn(d["b"][h].shape) * 0.2
-                self.test(d)
+            max=float('-inf')
+            at=0
+            for i in range(len(score)):
+                if score[i]>max:
+                    max=score[i]
+                    at=i
+            self.BestScoreInGen=max
+            c=[w[i][at] for i in range(len(d['W']))]
+            cc=[b[i][at] for i in range(len(d['b']))]
+            self.WBGenRef={'W':c,'b':cc}
 
             print("generation :",i,"best score :",self.BestScoreInGen)
-            self.WBGenRef=self.WBBestInGen
-            self.runner.reset()
             self.BestScoreInGen=0
-            self.WBBestInGen={}
             self.test_pygame(self.WBGenRef)
 
     def test(self,dico):
@@ -179,6 +208,7 @@ class NeuralNetwork:
         for _ in range(time):
             pos = self.objectif
             x,y,v,vec=self.runner.getall()
+            input_data = self.runner.getallANN()
             input_data = torch.tensor([
                 [x / TAILLEX], 
                 [y / TAILLEY], 
