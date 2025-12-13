@@ -9,7 +9,6 @@ device='cpu'
 print(f"Using {device} device")
 torch.set_default_device(device)
 
-
 TAILLEX=1000
 TAILLEY=800
 MAXDISTANCE=torch.sqrt(torch.tensor(TAILLEX**2+TAILLEY**2))
@@ -27,19 +26,20 @@ def checkTime(n):
     else:
         return 0
 
-def norme(vect): 
-    return torch.sqrt(vect[0]**2+vect[1]**2)
+#def normalise(vect): # dim 0 [x,y]
+#    vect = vect/vect.sum(0).expand_as(vect) 
+#    vect[torch.isnan(vect)]=0 
+#    return vect
 
-def Vnormale(vect,norme):
-    if norme!=0:
-        return (vect[0]/norme,vect[1]/norme)
-    return (0,0)
-
+def normalise(vect):
+    norm = torch.linalg.vector_norm(vect)
+    if norm > 1e-8:
+        return vect / norm
+    return torch.zeros_like(vect)
 class Runner:
-    def __init__(self):
-        self.StartPos=(TAILLEX//2,TAILLEY//2)
-        self.x = self.StartPos[0]
-        self.y = self.StartPos[1]
+    def __init__(self,startpos):
+        self.StartPos=startpos
+        self.ActPos=startpos
         self.v=0
         self.Acoef=0.01
         self.Fcoef=0.5
@@ -48,81 +48,78 @@ class Runner:
         self.color=(255,255,255)
         self.radius=5
 
-    def updateVector(self,Mx,My,Va): #Mx,My : target position , Va : target speed (-1 to 1)
-        vector = [Mx-self.x, My-self.y]
-        vector= torch.tensor(vector)
-        nvector = norme(vector)
-        vnormale = Vnormale(vector,nvector)
+    def updateVector(self,target: torch.tensor,Va: torch.tensor): #target : target position , Va : target speed (-1 to 1)
         
         target_v = Va * PX 
         if target_v < self.v: #acceleration or freinage
             v=self.v+self.Fcoef * (target_v - self.v)
-            if round(float(v),6)==0: #avoid big negative like -1e-200
+            if v<=10e-4: #avoid big negative like -1e-200
                 v=0
         else:
             v=self.v+self.Acoef * (target_v - self.v)
 
-        nvector1 = norme(self.vector)
-        vnormale1 = Vnormale(self.vector,nvector1)
+        vector = target-self.ActPos
+        vector = normalise(vector)
 
-        vector2=torch.add(torch.tensor(vnormale1),torch.tensor(vnormale))
-        nvector2 = norme(vector2)
-        vnormale2 = Vnormale(vector2,nvector2)
+        vector2=vector+self.vector
+        vector2=normalise(vector2)
 
-
-        return v,vnormale2 #v : new speed , vnormale2 : new direction vector
+        return v,vector2 #v : new speed , vnormale2 : new direction vector
 
     def reset(self): #reset everything, use at the start of test
-        self.x = self.StartPos[0]
-        self.y = self.StartPos[1]
+        self.ActPos=self.StartPos
         self.v=0
         self.vector=torch.tensor([0,0])
         return
 
-    def inTrajectory(self,Mx,My,Second,First): #if runner skip the point he asked to reach he would brake
-        cher=torch.tensor([Mx,My])
+    def inTrajectory(self,target,Second,First): #if runner skip the point he asked to reach he would brake
         v = torch.subtract(Second,First)
-        if norme(v)==0:
-            return norme(torch.subtract(cher, First))
+        if torch.linalg.vector_norm(v)==0:
+            return torch.linalg.vector_norm(torch.subtract(target, First))
         else:
-            w = cher - First      
-            f = cher + (torch.dot(w, v) / torch.dot(v, v)) * v 
-            return norme(torch.subtract(f, First)) #projection orthogonal point distance to the line segment
+            w = target - First      
+            f = target + (torch.dot(w, v) / torch.dot(v, v)) * v 
+            return torch.linalg.vector_norm(torch.subtract(f, First)) #projection orthogonal point distance to the line segment
     
-    def move(self,mx,my,va):
-        v,vec=self.updateVector(mx,my,va)
-        if self.inTrajectory(mx,my,torch.tensor([self.x+v*vec[0],self.y+v*vec[1]]),torch.tensor([self.x,self.y])) < self.radius:
-            v,vec=self.updateVector(mx,my,0)
-            pass
-        
+    def move(self,target,va):
+        v,vec=self.updateVector(target,va)
+        OldPos=self.ActPos
+        NewPos=self.ActPos+(torch.multiply(vec,v/FPSM))  
+        if self.inTrajectory(target,NewPos,OldPos) < self.radius:
+            v,vec=self.updateVector(target,0)
+            self.ActPos=self.ActPos+(torch.multiply(vec,v/FPSM))        
+        else:
+            self.v=v
+            self.ActPos=NewPos
         self.vector=vec
-        self.v=v
-        self.x=self.x+self.vector[0]*v*1/FPSM
-        self.y=self.y+self.vector[1]*v*1/FPSM #update position 1 frame by 1 frame
-        
+        self.vector=vec
         return
 
     def draw(self,screen):
-        pygame.draw.circle(screen,self.color,(int(self.x),int(self.y)),self.radius)
-        pygame.draw.line(screen,(255,0,0),(int(self.x),int(self.y)),(int(self.x+self.vector[0]*self.v),int(self.y+self.vector[1]*self.v)),2)
+        pygame.draw.circle(screen,self.color,(int(self.ActPos[0].item()),int(self.ActPos[1].item())),self.radius)
+        #pygame.draw.line(screen,(255,0,0),(int(self.ActPos[0].item()),int(self.ActPos[1].item())),(int(self.x+self.vector[0]*self.v),int(self.y+self.vector[1]*self.v)),2)
         return
 
     def getall(self):
-        return (self.x,self.y,self.v,self.vector)
+        return (self.ActPos[0].item(),self.ActPos[1].item(),self.v,self.vector)
     
     def getallANN(self):
         c=torch.tensor([
-                [self.x / TAILLEX], 
-                [self.y / TAILLEY], 
+                [self.ActPos[0].item() / TAILLEX], 
+                [self.ActPos[1].item() / TAILLEY], 
                 [self.v / PX], 
-                [0.5*(1+self.vector[0])], 
-                [0.5*(1+self.vector[1])]])
+                [0.5*(1+self.vector[0].item())], 
+                [0.5*(1+self.vector[1].item())]
+                ])
         return c
 
+class Brunner():
+    def __init__(self):
+        pass
 
 class NeuralNetwork:
     def __init__(self):
-        self.runner=Runner()
+        
         self.ANNDisp = [7, 8, 16, 8, 3] #7 input,3 output, 2 hidden layers
         self.WBGenRef={'W':[torch.rand(self.ANNDisp[i+1], self.ANNDisp[i],dtype=dtype) for i in range(len(self.ANNDisp)-1)],
                        'b':[torch.rand(self.ANNDisp[i], 1,dtype=dtype) for i in range(1,len(self.ANNDisp))]} #generation reference ( proud of this fucking way to create weights and biases )
@@ -139,53 +136,50 @@ class NeuralNetwork:
         
     def Sigmoid(self,x):
         return self.sigmoid(x)
-    
-    def feed_forward(self,A0,dico): #can't explain shortly, it's basic ANN feed forward with sigmoid activation
-        Alist=A0
-        for i in range(len(self.ANNDisp)-1):
-            Zi=dico['W'][i] @ Alist + dico['b'][i]
-            Alist=self.Sigmoid(Zi)
-        y_hat = Alist
-        return y_hat
 
-    def ScoreUpdate(self,x,y,posx,posy): #every frame score updpate, need to to do better system later
-        c=torch.sqrt((x - posx) ** 2 + (y - posy) ** 2)
+    def ScoreUpdate(self,pos,target): #every frame score updpate, need to to do better system later
+        c=torch.norm(pos-target)
         ct=1-(c/MAXDISTANCE)
-        
         return self.Sigmoid(ct)
 
 
     def start(self):
+        startpos=torch.tensor([TAILLEX//2,TAILLEY//2])
         for i in range(self.Ngen): #generation loop
             print("gen : ",i)
             d=copy.deepcopy(self.WBGenRef)
+
+            w=[[i.clone() for i in d["W"]] for _ in range(self.Ntest)]
+            b=[[i.clone() for i in d["b"]] for _ in range(self.Ntest)]
             
-            w=[[i.clone() for i in d["W"]] for _ in range(100)]
-            b=[[i.clone() for i in d["b"]] for _ in range(100)]
+            w= [torch.stack([d['W'][i].clone() for _ in range(self.Ntest)]) for i in range(len(d['W']))]
+            b= [torch.stack([d['b'][i].clone() for _ in range(self.Ntest)]) for i in range(len(d['b']))]
+
+            mw=[torch.randn(w[i].shape)*0.05 for i in range(len(d['W']))]
+            mb=[torch.randn(b[i].shape)*0.05 for i in range(len(d['b']))]
             
-            w = [torch.stack([sample[i] for sample in w]) for i in range(len(d['W']))] #not mine
-            b= [torch.stack([sample[i] for sample in b]) for i in range(len(d['b']))]
-            
-            mw=[[torch.randn(d["W"][i].shape)*0.2 for _ in range(100)] for i in range(len(d['W']))]
-            mb=[[torch.randn(d["b"][i].shape)*0.2 for _ in range(100)] for i in range(len(d['b']))]
-            w=torch.add(torch.stack(w),torch.stack(mw)) #STOP HERE
-            b=torch.add(b,mb)
+            for iw in range(len(w)):
+                w[iw]=torch.add(mw[iw],w[iw])
+            for ib in range(len(b)):
+                print(ib,type(b[ib]),type(mb[ib]))
+                b[ib]=torch.add(b[ib],mb[ib])
+
             pos = self.objectif
-            cl=[Runner() for _ in range(100)]
-            score=[0 for _ in range(100)]
+            cl=[Runner(startpos) for _ in range(self.Ntest)]
+            score=[0 for _ in range(self.Ntest)]
+
             for j in range(FPSM*self.timeDuration): #movement loop
                 print(j)
                 data=[torch.vstack([i.getallANN(),torch.tensor([[pos[0] / TAILLEX],[pos[1] / TAILLEY]])]) for i in cl]
-               
                 data=torch.stack(data)
                 for i in range(len(d['W'])):
-                    
                     data=w[i] @ data + b[i]
                     data=self.Sigmoid(data)
 
                 for i in range(len(cl)):
-                    cl[i].move(data[i][0]*TAILLEX,data[i][1]*TAILLEY,data[i][2])
-                    score[i]+=self.ScoreUpdate(cl[i].x,cl[i].y,pos[0],pos[1])
+                    targ=torch.tensor([data[i][0]*TAILLEX,data[i][1]*TAILLEY])
+                    cl[i].move(targ,data[i][2]) #<-
+                    score[i]+=self.ScoreUpdate(pos,targ)
 
             max=float('-inf')
             at=0
@@ -202,33 +196,16 @@ class NeuralNetwork:
             self.BestScoreInGen=0
             self.test_pygame(self.WBGenRef)
 
-    def test(self,dico):
-        time=FPSM*self.timeDuration 
-      
-        for _ in range(time):
-            pos = self.objectif
-            x,y,v,vec=self.runner.getall()
-            input_data = self.runner.getallANN()
-            input_data = torch.tensor([
-                [x / TAILLEX], 
-                [y / TAILLEY], 
-                [v / PX], 
-                [0.5*(1+vec[0])], 
-                [0.5*(1+vec[1])],
-                [pos[0] / TAILLEX],
-                [pos[1] / TAILLEY]])
-            
-            output = self.feed_forward(input_data,dico)
-            self.runner.move(TAILLEX * output[0][0], TAILLEY * output[1][0], output[2][0])
-            self.ScoreUpdate(x,y,pos[0],pos[1])
+    def feed_forward(self,A0,dico): #can't explain shortly, it's basic ANN feed forward with sigmoid activation
+        Alist=A0
+        for i in range(len(self.ANNDisp)-1):
+            Zi=dico['W'][i] @ Alist + dico['b'][i]
+            Alist=self.sigmoid(Zi)
+        y_hat = Alist
+        return y_hat
 
-        if self.ActTestScore>self.BestScoreInGen: #update best score and weights/biases if needed
-            self.WBBestInGen=dico
-            self.BestScoreInGen=self.ActTestScore
-        self.ActTestScore=0
-        return
-    
     def test_pygame(self,dico): #visualisation
+        runner=Runner(torch.tensor([TAILLEX//2,TAILLEY//2]))
         time=FPSA*self.timeDuration
         atime=0
         clock=pygame.time.Clock()
@@ -242,19 +219,20 @@ class NeuralNetwork:
                     quit()
             if atime>=time:
                 running = False
-                self.runner.reset()
+                runner.reset()
             else : 
                 if n==0:
                     n=checkTime(n)
                     pos = self.objectif
-                    x,y,v,vec=self.runner.getall()
+                    x,y,v,vec=runner.getall()
                     input_data = torch.tensor([[x / TAILLEX], [y / TAILLEY], [v / PX], [vec[0]], [vec[1]],[pos[0] / TAILLEX],[pos[1] / TAILLEY]])
                     output = self.feed_forward(input_data,dico)
-                    self.runner.move(TAILLEX * output[0][0], TAILLEY * output[1][0], output[2][0])
+                    targ=torch.tensor([output[0][0]*TAILLEX,output[1][0]*TAILLEY])
+                    runner.move(targ, output[2][0])
                 else:
                     n=checkTime(n)
 
-                self.runner.draw(screen)
+                runner.draw(screen)
                 pygame.draw.circle(screen,(0,255,0),(pos[0],pos[1]),5)
                 pygame.display.update()
                 clock.tick(FPSA)
