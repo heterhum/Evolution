@@ -1,7 +1,7 @@
 import pygame
 import numpy as np
 import copy
-import physicV4 as physic
+from physicV4 import physic 
 TAILLEX=1000
 TAILLEY=800
 MAXDISTANCE=np.sqrt(TAILLEX**2+TAILLEY**2)
@@ -11,7 +11,7 @@ FPSM=30 #number of frames for movement calculation
 FPSA=60 #number of frames for animation
 pygame.init()
 PX=100 #max speed, pixels per second
-
+physic=physic()
 class Tagger:
     def __init__(self,color,radius,startpos):
         self.v=0
@@ -64,8 +64,8 @@ class Runner:
 
     def scoreUpdate(self,posx,posy):
         c=np.linalg.norm(self.xy - np.array([posx,posy]))
-        ct=1-(c/MAXDISTANCE)
-        self.score+=physic.sigmoid(ct)
+        ct=(c/MAXDISTANCE)
+        self.score+=ct
         return
 
     def draw(self,screen):
@@ -191,12 +191,11 @@ class NeuralNetwork:
     
     def test_pygame(self,dico): #visualisation
         time=FPSM*self.timeDuration
-
+        clock=pygame.time.Clock()
         for _ in range(time):
             screen.fill((0, 0, 0))
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
-                    running = False
                     quit()
             Rx,Ry,Rv,Rvecx,Rvecy=self.runner.getall()
             Tx,Ty,Tv,Tvecx,Tvecy=self.tagger.getall()
@@ -221,6 +220,7 @@ class NeuralNetwork:
             self.runner.draw(screen)
             self.tagger.draw(screen)
             pygame.display.update()
+            clock.tick(FPSM)
 
         return
     
